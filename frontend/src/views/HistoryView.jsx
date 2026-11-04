@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
-import { Search, Download } from 'lucide-react';
+import { Search, Download, Copy, Check } from 'lucide-react';
+
+const API_BASE = 'http://localhost:8080/api';
 
 export default function HistoryView() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -8,153 +10,156 @@ export default function HistoryView() {
   const [selectedAction, setSelectedAction] = useState('All');
   const [selectedStatus, setSelectedStatus] = useState('All');
 
-  // State cho phân trang
+  // Phân trang & PageSize
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [pageSize, setPageSize] = useState(10);
 
-  // Dữ liệu mẫu 
-  const [historyList] = useState([
-    { id: '01', name: 'Đèn 1', action: 'Turn on', status: 'Success', time: '21/08/2026 08:00:00' },
-    { id: '02', name: 'Đèn 2', action: 'Turn off', status: 'Fail', time: '21/08/2026 08:01:00' },
-    { id: '03', name: 'Đèn 1', action: 'Turn off', status: 'Pending', time: '21/08/2026 08:05:12' },
-    { id: '04', name: 'Đèn 2', action: 'Turn on', status: 'Success', time: '21/08/2026 08:12:44' },
-    { id: '01', name: 'Đèn 1', action: 'Turn on', status: 'Success', time: '21/08/2026 08:15:00' },
-    { id: '02', name: 'Đèn 2', action: 'Turn off', status: 'Fail', time: '21/08/2026 08:18:00' },
-    { id: '03', name: 'Đèn 1', action: 'Turn off', status: 'Pending', time: '21/08/2026 08:20:12' },
-    { id: '04', name: 'Đèn 2', action: 'Turn on', status: 'Success', time: '21/08/2026 08:22:44' },
-    { id: '01', name: 'Đèn 1', action: 'Turn on', status: 'Success', time: '21/08/2026 08:25:00' },
-    { id: '02', name: 'Đèn 2', action: 'Turn off', status: 'Fail', time: '21/08/2026 08:28:00' },
-    { id: '03', name: 'Đèn 1', action: 'Turn off', status: 'Pending', time: '21/08/2026 08:30:12' },
-    { id: '04', name: 'Đèn 2', action: 'Turn on', status: 'Success', time: '21/08/2026 08:35:44' },
-    { id: '01', name: 'Đèn 1', action: 'Turn on', status: 'Success', time: '21/08/2026 08:40:00' },
-    { id: '02', name: 'Đèn 2', action: 'Turn off', status: 'Fail', time: '21/08/2026 08:42:00' },
-    { id: '03', name: 'Đèn 1', action: 'Turn off', status: 'Pending', time: '21/08/2026 08:45:12' },
-    { id: '04', name: 'Đèn 2', action: 'Turn on', status: 'Success', time: '21/08/2026 08:50:44' },
-  ]);
+  // Danh sách lịch sử bật tắt thiết bị từ Backend
+  const [historyList, setHistoryList] = useState([]);
+
+  // State quản lý hiệu ứng đã copy cho từng dòng
+  const [copiedTime, setCopiedTime] = useState(null);
+
+  const handleCopy = (timeStr, rowKey) => {
+    navigator.clipboard.writeText(timeStr);
+    setCopiedTime(rowKey);
+    setTimeout(() => {
+      setCopiedTime(null);
+    }, 1500);
+  };
+
+  const fetchActionHistory = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/devices/history?limit=500`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryList(data);
+      }
+    } catch (error) {
+      console.error('Lỗi tải lịch sử thiết bị:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchActionHistory();
+    const interval = setInterval(fetchActionHistory, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   const renderStatusBadge = (status) => {
     switch (status) {
       case 'Success':
         return (
-          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
             Success
           </span>
         );
       case 'Fail':
       case 'Failed':
         return (
-          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
             Fail
           </span>
         );
       case 'Pending':
-      case 'Spending':
         return (
-          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30">
             Pending
           </span>
         );
       default:
         return (
-          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-gray-800 text-gray-400 border border-gray-700">
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-800 text-gray-400 border border-gray-700">
             {status}
           </span>
         );
     }
   };
 
-  // 1. Lọc danh sách theo filter
+  // Lọc và tìm kiếm lịch sử thiết bị
   const filteredList = historyList.filter((item) => {
-    const matchesSearch = item.time.includes(searchTerm) || item.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch =
+      (item.time && item.time.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (item.name && item.name.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesId = selectedId === 'All' || item.id === selectedId;
     const matchesAction = selectedAction === 'All' || item.action === selectedAction;
     const matchesStatus = selectedStatus === 'All' || item.status === selectedStatus;
     return matchesSearch && matchesId && matchesAction && matchesStatus;
   });
 
-  // 2. Logic tính toán phân trang
-  const totalPages = Math.ceil(filteredList.length / itemsPerPage) || 1;
-  const indexOfLastItem = currentPage * itemsPerPage;
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  
-  // Danh sách chỉ lấy đúng 10 mục của trang hiện tại
+  const totalPages = Math.ceil(filteredList.length / pageSize) || 1;
+  const indexOfLastItem = currentPage * pageSize;
+  const indexOfFirstItem = indexOfLastItem - pageSize;
   const currentItems = filteredList.slice(indexOfFirstItem, indexOfLastItem);
 
   const startRecord = filteredList.length === 0 ? 0 : indexOfFirstItem + 1;
   const endRecord = Math.min(indexOfLastItem, filteredList.length);
 
   return (
-    <div>
+    <div className="h-full flex flex-col justify-between overflow-hidden">
       <Topbar title="History" />
 
-      {/* Nút Export */}
-      <div className="flex justify-end mb-6">
-        <button 
-          onClick={() => alert("Xuất file báo cáo lịch sử...")}
-          className="flex items-center gap-2 px-5 py-2.5 bg-[#1b253b] hover:bg-blue-600 text-white rounded-xl text-sm font-semibold border border-[#2b3a5a] shadow-lg transition"
+      <div className="flex justify-end my-2 shrink-0">
+        <button
+          onClick={() => alert('Xuất file lịch sử thiết bị...')}
+          className="flex items-center gap-2 px-4 py-1.5 bg-[#1b253b] hover:bg-blue-600 text-white rounded-xl text-xs font-semibold border border-[#2b3a5a] shadow transition cursor-pointer"
         >
-          <Download size={16} />
+          <Download size={14} />
           Export
         </button>
       </div>
 
-      {/* Bảng danh sách hoạt động */}
-      <div className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-6">
-        {/* Bộ lọc & Tìm kiếm */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+      <div className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-4 flex-1 flex flex-col justify-between min-h-0">
+        {/* Thanh tìm kiếm & Bộ lọc */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3 shrink-0">
           <div className="relative w-64">
-            <Search className="absolute left-3 top-2.5 text-gray-500" size={16} />
+            <Search className="absolute left-3 top-2.5 text-gray-500" size={14} />
             <input
               type="text"
-              placeholder="Search by time..."
+              placeholder="Search by time or device name..."
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
-                setCurrentPage(1); // Reset về trang 1 khi gõ tìm kiếm
+                setCurrentPage(1);
               }}
-              className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
             />
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Lọc theo Device ID */}
-            <select 
+          <div className="flex items-center gap-2">
+            <select
               value={selectedId}
               onChange={(e) => {
                 setSelectedId(e.target.value);
                 setCurrentPage(1);
               }}
-              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-2.5 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
             >
               <option value="All">ID: All</option>
-              <option value="01">01</option>
-              <option value="02">02</option>
-              <option value="03">03</option>
-              <option value="04">04</option>
+              <option value="01">01 (Đèn 1)</option>
+              <option value="02">02 (Đèn 2)</option>
             </select>
 
-            {/* Lọc theo Action */}
-            <select 
+            <select
               value={selectedAction}
               onChange={(e) => {
                 setSelectedAction(e.target.value);
                 setCurrentPage(1);
               }}
-              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-2.5 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
             >
               <option value="All">Action: All</option>
               <option value="Turn on">Turn on</option>
               <option value="Turn off">Turn off</option>
             </select>
 
-            {/* Lọc theo Status */}
-            <select 
+            <select
               value={selectedStatus}
               onChange={(e) => {
                 setSelectedStatus(e.target.value);
                 setCurrentPage(1);
               }}
-              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-2.5 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
             >
               <option value="All">Status: All</option>
               <option value="Success">Success</option>
@@ -164,34 +169,46 @@ export default function HistoryView() {
           </div>
         </div>
 
-        {/* Bảng hiển thị danh sách (10 dòng/trang) */}
-        <div className="overflow-x-auto">
+        {/* Bảng lịch sử */}
+        <div className="overflow-x-auto flex-1 min-h-0">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-[#1e293b] text-gray-500 uppercase tracking-wider">
-                <th className="pb-3 px-4">Device ID</th>
-                <th className="pb-3 px-4">Name</th>
-                <th className="pb-3 px-4">Action</th>
-                <th className="pb-3 px-4">Status</th>
-                <th className="pb-3 px-4">Time</th>
+                <th className="pb-2.5 px-3">Device ID</th>
+                <th className="pb-2.5 px-3">Name</th>
+                <th className="pb-2.5 px-3">Action</th>
+                <th className="pb-2.5 px-3">Status</th>
+                <th className="pb-2.5 px-3">Time</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1e293b]/50 text-gray-300">
-              {currentItems.map((row, idx) => (
-                <tr key={idx} className="hover:bg-[#15203b]/40 transition">
-                  <td className="py-4 px-4 font-mono font-semibold text-white">{row.id}</td>
-                  <td className="py-4 px-4 font-medium">{row.name}</td>
-                  <td className="py-4 px-4 text-gray-400">{row.action}</td>
-                  <td className="py-4 px-4">
-                    {renderStatusBadge(row.status)}
-                  </td>
-                  <td className="py-4 px-4 font-mono text-gray-400">{row.time}</td>
-                </tr>
-              ))}
+              {currentItems.map((row, idx) => {
+                const rowKey = row.recordId || `${row.id}-${row.time}-${idx}`;
+                return (
+                  <tr key={rowKey} className="hover:bg-[#15203b]/40 transition">
+                    <td className="py-2.5 px-3 font-mono font-semibold text-white">{row.id}</td>
+                    <td className="py-2.5 px-3 font-medium">{row.name}</td>
+                    <td className="py-2.5 px-3 text-gray-400">{row.action}</td>
+                    <td className="py-2.5 px-3">{renderStatusBadge(row.status)}</td>
+                    <td className="py-2.5 px-3 font-mono text-gray-400">
+                      <div className="inline-flex items-center gap-2">
+                        <span>{row.time}</span>
+                        <button
+                          onClick={() => handleCopy(row.time, rowKey)}
+                          title="Copy time"
+                          className="p-1 hover:bg-[#1e293b] rounded text-gray-400 hover:text-white transition cursor-pointer"
+                        >
+                          {copiedTime === rowKey ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {filteredList.length === 0 && (
                 <tr>
                   <td colSpan="5" className="text-center py-8 text-gray-500">
-                    Không tìm thấy bản ghi phù hợp
+                    Chưa có lịch sử bật/tắt thiết bị hoặc không tìm thấy bản ghi
                   </td>
                 </tr>
               )}
@@ -199,29 +216,47 @@ export default function HistoryView() {
           </table>
         </div>
 
-        {/* Thanh điều hướng phân trang */}
-        <div className="flex items-center justify-between text-xs text-gray-500 mt-6 pt-4 border-t border-[#1e293b]">
-          <span>
-            Showing {startRecord}-{endRecord} of {filteredList.length} records
-          </span>
+        {/* Thanh phân trang & chọn PageSize */}
+        <div className="flex items-center justify-between text-xs text-gray-500 mt-3 pt-3 border-t border-[#1e293b] shrink-0">
+          <div className="flex items-center gap-3">
+            <span>
+              Showing {startRecord}-{endRecord} of {filteredList.length} records
+            </span>
+
+            <div className="flex items-center gap-1.5 pl-3 border-l border-[#1e293b]">
+              <span className="text-[11px] text-gray-400">Rows:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="bg-[#0a0f1d] border border-[#1e293b] rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none focus:border-blue-500"
+              >
+                <option value={5}>5 / page</option>
+                <option value={10}>10 / page</option>
+                <option value={20}>20 / page</option>
+                <option value={50}>50 / page</option>
+              </select>
+            </div>
+          </div>
+
           <div className="flex items-center gap-1.5">
-            {/* Nút lùi trang */}
-            <button 
+            <button
               disabled={currentPage === 1}
               onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              className="px-2.5 py-1 rounded hover:bg-[#1e293b] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-500 transition cursor-pointer disabled:cursor-not-allowed"
+              className="px-2 py-1 rounded hover:bg-[#1e293b] hover:text-white disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
             >
               &lt;
             </button>
 
-            {/* Danh sách nút số trang */}
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+            {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => i + 1).map((pageNum) => (
               <button
                 key={pageNum}
                 onClick={() => setCurrentPage(pageNum)}
-                className={`w-7 h-7 flex items-center justify-center rounded-lg transition font-medium ${
-                  currentPage === pageNum 
-                    ? 'bg-blue-600 text-white font-bold shadow' 
+                className={`w-6 h-6 flex items-center justify-center rounded-md transition font-medium text-xs ${
+                  currentPage === pageNum
+                    ? 'bg-blue-600 text-white font-bold shadow'
                     : 'text-gray-400 hover:bg-[#1e293b] hover:text-white'
                 }`}
               >
@@ -229,11 +264,10 @@ export default function HistoryView() {
               </button>
             ))}
 
-            {/* Nút tiến trang */}
-            <button 
+            <button
               disabled={currentPage === totalPages}
               onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-              className="px-2.5 py-1 rounded hover:bg-[#1e293b] hover:text-white disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-500 transition cursor-pointer disabled:cursor-not-allowed"
+              className="px-2 py-1 rounded hover:bg-[#1e293b] hover:text-white disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
             >
               &gt;
             </button>
