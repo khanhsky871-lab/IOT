@@ -4,7 +4,7 @@ import { Thermometer, Droplets, Sun, Lightbulb, Loader2 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8080/api';
 
-export default function DashboardView() {
+export default function DashboardView({ user, onLogout }) {
   // State thông số cảm biến hiện tại
   const [currentMetrics, setCurrentMetrics] = useState({
     temp: 24.8,
@@ -26,7 +26,16 @@ export default function DashboardView() {
   // 1. Lấy trạng thái Đèn ban đầu từ Backend
   const fetchDeviceStatus = async () => {
     try {
-      const res = await fetch(`${API_BASE}/devices`);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/devices`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.status === 401 || res.status === 403) {
+        onLogout?.();
+        return;
+      }
       if (res.ok) {
         const devices = await res.json();
         const d1 = devices.find((d) => d.id === 1);
@@ -44,7 +53,16 @@ export default function DashboardView() {
   // 2. Lấy dữ liệu cảm biến mới nhất để cập nhật Thẻ & Biểu đồ
   const fetchLatestSensors = async () => {
     try {
-      const res = await fetch(`${API_BASE}/sensors/data?limit=30`);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/sensors/data?limit=30`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.status === 401 || res.status === 403) {
+        onLogout?.();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         if (data && data.length > 0) {
@@ -99,21 +117,34 @@ export default function DashboardView() {
     // Bật hiệu ứng loading 0.5s
     setLoadingLight((prev) => ({ ...prev, [lightKey]: true }));
 
+    // Lấy token đã lưu khi đăng nhập
+    const token = localStorage.getItem('token');
+
     setTimeout(async () => {
       try {
         const res = await fetch(`${API_BASE}/devices/control`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({
             deviceId: deviceId,
-            userId: 1,
+            userId: user?.id || 1,
             action: actionText,
             triggerBy: 'Web Dashboard'
           })
         });
 
+        if (res.status === 401 || res.status === 403) {
+          onLogout?.();
+          return;
+        }
+
         if (res.ok) {
           setLights((prev) => ({ ...prev, [lightKey]: nextState }));
+        } else {
+          console.error('Lỗi phản hồi từ server:', res.status);
         }
       } catch (err) {
         console.error('Lỗi điều khiển đèn:', err);

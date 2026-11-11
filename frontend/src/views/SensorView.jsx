@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
-import GaugeMeter from '../components/GaugeMeter';
-import { Search, Copy, Check } from 'lucide-react';
+import { Search, Copy, Check, ArrowUpDown } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8080/api';
 
-export default function SensorView() {
+export default function SensorView({ onLogout }) {
   const [search, setSearch] = useState('');
   const [searchTarget, setSearchTarget] = useState('All');
+  const [sortOrder, setSortOrder] = useState('none'); // 'none' | 'asc' | 'desc'
 
   // Phân trang & PageSize
   const [currentPage, setCurrentPage] = useState(1);
@@ -27,10 +27,19 @@ export default function SensorView() {
     }, 1500);
   };
 
-  // Gọi API lấy dữ liệu cảm biến từ SQL Server
+  // Gọi API lấy dữ liệu cảm biến từ SQL Server (có kèm JWT Token)
   const fetchSensorHistory = async () => {
     try {
-      const res = await fetch(`${API_BASE}/sensors/data?limit=500`);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/sensors/data?limit=500`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.status === 401 || res.status === 403) {
+        onLogout?.();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setSensorData(
@@ -55,12 +64,7 @@ export default function SensorView() {
     return () => clearInterval(interval);
   }, []);
 
-  // Lấy giá trị mới nhất cho 3 đồng hồ GaugeMeter
-  const latestTemp = Number(sensorData.find((r) => r.unit === '°C')?.value ?? 24.8);
-  const latestHumid = Number(sensorData.find((r) => r.unit === '%')?.value ?? 58.2);
-  const latestLight = Number(sensorData.find((r) => r.unit === 'lx')?.value ?? 720);
-
-  // Lọc và tìm kiếm dữ liệu
+  // 1. Lọc và tìm kiếm dữ liệu
   const filteredSensors = sensorData.filter((row) => {
     const trimmed = search.trim().toLowerCase();
     if (!trimmed) return true;
@@ -87,14 +91,27 @@ export default function SensorView() {
     );
   });
 
+  // 2. Sắp xếp theo giá trị (Value)
+  const sortedSensors = [...filteredSensors].sort((a, b) => {
+    if (sortOrder === 'none') return 0;
+    const valA = parseFloat(a.value) || 0;
+    const valB = parseFloat(b.value) || 0;
+    if (sortOrder === 'asc') {
+      return valA - valB;
+    } else if (sortOrder === 'desc') {
+      return valB - valA;
+    }
+    return 0;
+  });
+
   // Phân trang theo pageSize
-  const totalPages = Math.ceil(filteredSensors.length / pageSize) || 1;
+  const totalPages = Math.ceil(sortedSensors.length / pageSize) || 1;
   const indexOfLastItem = currentPage * pageSize;
   const indexOfFirstItem = indexOfLastItem - pageSize;
-  const currentItems = filteredSensors.slice(indexOfFirstItem, indexOfLastItem);
+  const currentItems = sortedSensors.slice(indexOfFirstItem, indexOfLastItem);
 
-  const startRecord = filteredSensors.length === 0 ? 0 : indexOfFirstItem + 1;
-  const endRecord = Math.min(indexOfLastItem, filteredSensors.length);
+  const startRecord = sortedSensors.length === 0 ? 0 : indexOfFirstItem + 1;
+  const endRecord = Math.min(indexOfLastItem, sortedSensors.length);
 
   const getPlaceholder = () => {
     switch (searchTarget) {
@@ -115,45 +132,59 @@ export default function SensorView() {
     <div className="h-full flex flex-col justify-between overflow-hidden">
       <Topbar title="Live Data Sensors" />
 
-      {/* 1. Hàng 3 đồng hồ đo GaugeMeter */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 my-2 shrink-0">
-        <GaugeMeter value={latestTemp} max={50} unit="°C" label="DHT11 Temp" color="#22c55e" />
-        <GaugeMeter value={latestHumid} max={100} unit="%" label="DHT11 Humid" color="#3b82f6" />
-        <GaugeMeter value={latestLight} max={4095} unit="lx" label="LDR Light" color="#ef4444" />
-      </div>
+      {/* Bảng dữ liệu cảm biến */}
+      <div className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-4 flex-1 flex flex-col justify-between min-h-0 my-2">
+        {/* Thanh tìm kiếm, chọn tiêu chí & Sắp xếp theo giá trị */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative w-80">
+              <Search className="absolute left-3 top-2.5 text-gray-500" size={15} />
+              <input
+                type="text"
+                placeholder={getPlaceholder()}
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-xl pl-9 pr-4 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              />
+            </div>
 
-      {/* 2. Bảng dữ liệu cảm biến */}
-      <div className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-4 flex-1 flex flex-col justify-between min-h-0">
-        {/* Thanh tìm kiếm & chọn tiêu chí */}
-        <div className="flex flex-wrap items-center gap-3 mb-3 shrink-0">
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-2.5 text-gray-500" size={15} />
-            <input
-              type="text"
-              placeholder={getPlaceholder()}
-              value={search}
+            <select
+              value={searchTarget}
               onChange={(e) => {
-                setSearch(e.target.value);
+                setSearchTarget(e.target.value);
                 setCurrentPage(1);
               }}
-              className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-xl pl-9 pr-4 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-            />
+              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
+            >
+              <option value="All">All</option>
+              <option value="°C">°C</option>
+              <option value="%">%</option>
+              <option value="lx">lx</option>
+              <option value="Time">Time</option>
+            </select>
           </div>
 
-          <select
-            value={searchTarget}
-            onChange={(e) => {
-              setSearchTarget(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-blue-500"
-          >
-            <option value="All">All</option>
-            <option value="°C">°C</option>
-            <option value="%">%</option>
-            <option value="lx">lx</option>
-            <option value="Time">Time</option>
-          </select>
+          {/* Bộ chọn kiểu sắp xếp theo giá trị */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 flex items-center gap-1">
+              <ArrowUpDown size={14} /> Sort Value:
+            </span>
+            <select
+              value={sortOrder}
+              onChange={(e) => {
+                setSortOrder(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="none">Mặc định</option>
+              <option value="asc">Tăng dần (Low to High)</option>
+              <option value="desc">Giảm dần (High to Low)</option>
+            </select>
+          </div>
         </div>
 
         {/* Bảng dữ liệu */}
@@ -204,7 +235,7 @@ export default function SensorView() {
                   </tr>
                 );
               })}
-              {filteredSensors.length === 0 && (
+              {sortedSensors.length === 0 && (
                 <tr>
                   <td colSpan="6" className="text-center py-8 text-gray-500">
                     Chưa có dữ liệu hoặc không tìm thấy bản ghi phù hợp
@@ -219,7 +250,7 @@ export default function SensorView() {
         <div className="flex items-center justify-between text-xs text-gray-500 mt-3 pt-3 border-t border-[#1e293b] shrink-0">
           <div className="flex items-center gap-3">
             <span>
-              Showing {startRecord}-{endRecord} of {filteredSensors.length} records
+              Showing {startRecord}-{endRecord} of {sortedSensors.length} records
             </span>
 
             <div className="flex items-center gap-1.5 pl-3 border-l border-[#1e293b]">

@@ -1,26 +1,85 @@
 import React, { useState } from 'react';
 import Topbar from '../components/Topbar';
-import { Github, Figma, FileText, Webhook, ExternalLink } from 'lucide-react';
+import { Github, Figma, FileText, Webhook, ExternalLink, LogOut, KeyRound, CheckCircle2, AlertCircle } from 'lucide-react';
 
-export default function ProfileView() {
-  const [notifyEmail, setNotifyEmail] = useState(true);
-  const [notifyTelegram, setNotifyTelegram] = useState(false);
+const API_BASE = 'http://localhost:8080/api';
 
-  // Thông tin cá nhân và các đường dẫn tài liệu của bạn
+export default function ProfileView({ user, onLogout }) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [pwdFeedback, setPwdFeedback] = useState({ type: '', message: '' });
+
+  // Thông tin cá nhân lấy từ tài khoản đăng nhập (có fallback mặc định)
   const studentInfo = {
-    name: 'Đinh Gia Khánh',
-    msv: 'B23DCCN424', // Hoặc B21DCCN424 tùy bạn chỉnh
-    avatarUrl: '/avatar.jpg',
+    name: user?.fullName || 'Đinh Gia Khánh',
+    msv: user?.studentId || 'B23DCCN424',
+    className: user?.className || 'D23CQCN01-B',
+    email: user?.email || 'khanh.dg@ptit.edu.vn',
+    avatarUrl: user?.avatarUrl || '/avatar.jpg',
     githubUrl: 'https://github.com/khanhsky871-lab/IOT',
     figmaUrl: 'https://www.figma.com/design/ZGTjqCwrUKG8XCWyb4367P/IOT?node-id=0-1&t=bRbg4l7aFHaBwXuq-1',
-    pdfReportUrl: '/Dinh_Gia_Khanh_B23DCCN424.pdf', 
-    postmanUrl: 'https://documenter.getpostman.com/view/your-collection-link' 
+    pdfReportUrl: '/Dinh_Gia_Khanh_B23DCCN424.pdf',
+    postmanUrl: 'https://documenter.getpostman.com/view/your-collection-link'
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setPwdFeedback({ type: '', message: '' });
+
+    if (newPassword.length < 6) {
+      setPwdFeedback({ type: 'error', message: 'Mật khẩu mới phải có ít nhất 6 ký tự!' });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPwdFeedback({ type: 'error', message: 'Mật khẩu xác nhận không khớp!' });
+      return;
+    }
+
+    setSavingPassword(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/users/change-password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword
+        })
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        onLogout?.();
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPwdFeedback({ type: 'error', message: data.message || 'Đổi mật khẩu thất bại!' });
+        return;
+      }
+
+      setPwdFeedback({ type: 'success', message: data.message || 'Đổi mật khẩu thành công!' });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      console.error('Lỗi đổi mật khẩu:', err);
+      setPwdFeedback({ type: 'error', message: 'Không thể kết nối tới Backend!' });
+    } finally {
+      setSavingPassword(false);
+    }
   };
 
   return (
     <div className="h-full flex flex-col justify-between overflow-hidden">
       {/* Header */}
-      <Topbar title="Profile" />
+      <Topbar title="Profile" user={user} />
 
       {/* VÙNG NỘI DUNG CHÍNH */}
       <div className="flex-1 flex flex-col justify-between gap-3.5 py-2 min-h-0">
@@ -49,11 +108,15 @@ export default function ProfileView() {
 
               <div>
                 <h3 className="text-base font-bold text-white leading-tight">{studentInfo.name}</h3>
-                <div className="mt-1.5">
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
                   <span className="px-2.5 py-0.5 rounded-md bg-blue-500/20 text-blue-300 font-mono text-xs font-semibold border border-blue-500/30">
                     MSV: {studentInfo.msv}
                   </span>
+                  <span className="px-2.5 py-0.5 rounded-md bg-slate-800 text-gray-300 font-mono text-xs border border-slate-700">
+                    {studentInfo.className}
+                  </span>
                 </div>
+                <p className="text-[11px] text-gray-400 font-mono mt-1.5">{studentInfo.email}</p>
               </div>
             </div>
 
@@ -68,15 +131,56 @@ export default function ProfileView() {
           </div>
 
           {/* Khung Access & Authentication */}
-          <div className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-5 flex flex-col justify-between">
-            <h4 className="text-xs font-semibold text-white">Access & Authentication</h4>
-            
-            <div className="grid grid-cols-2 gap-3 my-1">
+          <form onSubmit={handleChangePassword} className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-5 flex flex-col justify-between gap-2.5">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold text-white">Access & Authentication</h4>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30 text-[11px] font-semibold transition cursor-pointer"
+              >
+                <LogOut size={13} /> Đăng xuất
+              </button>
+            </div>
+
+            {pwdFeedback.message && (
+              <div
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[11px] border ${
+                  pwdFeedback.type === 'success'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                }`}
+              >
+                {pwdFeedback.type === 'success' ? (
+                  <CheckCircle2 size={14} className="shrink-0" />
+                ) : (
+                  <AlertCircle size={14} className="shrink-0" />
+                )}
+                <span>{pwdFeedback.message}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div>
+                <label className="block text-[10px] text-gray-400 mb-1">Current Password</label>
+                <input
+                  type="password"
+                  required
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 transition"
+                />
+              </div>
+
               <div>
                 <label className="block text-[10px] text-gray-400 mb-1">New Password</label>
                 <input
                   type="password"
-                  placeholder="••••••••••••"
+                  required
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="••••••••"
                   className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 transition"
                 />
               </div>
@@ -85,24 +189,26 @@ export default function ProfileView() {
                 <label className="block text-[10px] text-gray-400 mb-1">Verify Password</label>
                 <input
                   type="password"
-                  placeholder="••••••••••••"
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="••••••••"
                   className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 transition"
                 />
               </div>
             </div>
 
-            <div className="pt-2 border-t border-[#1e293b]/60 space-y-1.5">
-             
-              
-              <div className="flex items-center justify-between text-xs text-gray-300">
-                
-              </div>
-
-              <div className="flex items-center justify-between text-xs text-gray-300">
-               
-              </div>
+            <div className="pt-2 border-t border-[#1e293b]/60 flex items-center justify-end">
+              <button
+                type="submit"
+                disabled={savingPassword}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold transition cursor-pointer disabled:cursor-wait"
+              >
+                <KeyRound size={14} />
+                <span>{savingPassword ? 'Đang cập nhật...' : 'Cập nhật mật khẩu'}</span>
+              </button>
             </div>
-          </div>
+          </form>
 
         </div>
 

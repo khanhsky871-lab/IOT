@@ -4,12 +4,10 @@ import {
   Layers, 
   History as HistoryIcon, 
   User, 
-  SunMoon, 
-  LogOut, 
-  Cpu 
+  LogOut 
 } from 'lucide-react';
 
-export default function Sidebar({ currentTab, setCurrentTab, isDarkMode, setIsDarkMode }) {
+export default function Sidebar({ currentTab, setCurrentTab, onLogout }) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'sensor', label: 'Data Sensor', icon: Layers },
@@ -40,7 +38,7 @@ export default function Sidebar({ currentTab, setCurrentTab, isDarkMode, setIsDa
               <button
                 key={item.id}
                 onClick={() => setCurrentTab(item.id)}
-                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
+                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 cursor-pointer ${
                   active 
                     ? 'bg-[#1b253b] text-blue-400 font-semibold shadow-inner' 
                     : 'text-gray-400 hover:text-gray-200 hover:bg-[#121a2d]'
@@ -56,13 +54,12 @@ export default function Sidebar({ currentTab, setCurrentTab, isDarkMode, setIsDa
 
       {/* Bottom Actions */}
       <div className="space-y-3 pt-4 border-t border-[#1a233a]">
-
         <button 
-          onClick={() => alert("Disconnecting from broker...")}
-          className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-rose-500 hover:bg-rose-500/10 rounded-xl transition"
+          onClick={onLogout}
+          className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-rose-500 hover:bg-rose-500/10 rounded-xl transition cursor-pointer"
         >
           <LogOut size={18} />
-          Disconnect
+          Đăng xuất
         </button>
       </div>
     </aside>
