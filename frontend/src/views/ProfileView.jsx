@@ -11,13 +11,13 @@ export default function ProfileView({ user, onLogout }) {
   const [savingPassword, setSavingPassword] = useState(false);
   const [pwdFeedback, setPwdFeedback] = useState({ type: '', message: '' });
 
-  // Thông tin cá nhân lấy từ tài khoản đăng nhập (có fallback mặc định)
+  // Thông tin cá nhân (ảnh luôn lấy trực tiếp từ /avatar.jpg, không lấy từ DB)
   const studentInfo = {
     name: user?.fullName || 'Đinh Gia Khánh',
     msv: user?.studentId || 'B23DCCN424',
     className: user?.className || 'D23CQCN01-B',
     email: user?.email || 'khanh.dg@ptit.edu.vn',
-    avatarUrl: user?.avatarUrl || '/avatar.jpg',
+    avatarUrl: '/avatar.jpg',
     githubUrl: 'https://github.com/khanhsky871-lab/IOT',
     figmaUrl: 'https://www.figma.com/design/ZGTjqCwrUKG8XCWyb4367P/IOT?node-id=0-1&t=bRbg4l7aFHaBwXuq-1',
     pdfReportUrl: '/Dinh_Gia_Khanh_B23DCCN424.pdf',

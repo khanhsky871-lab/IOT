@@ -15,15 +15,18 @@ import org.springframework.stereotype.Service;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 @Service
 public class DeviceService {
 
-    @Value("${mqtt.topic.led1.set:iot/led1/set}")
+    @Value("${mqtt.topic.led1.set:esp32/led1/set}")
     private String led1SetTopic;
 
-    @Value("${mqtt.topic.led2.set:iot/led2/set}")
+    @Value("${mqtt.topic.led2.set:esp32/led2/set}")
     private String led2SetTopic;
 
     private final DeviceRepository deviceRepository;
@@ -56,53 +59,90 @@ public class DeviceService {
             user = null;
         }
 
+        String actionText = "Turn on".equalsIgnoreCase(req.getAction()) ? "Turn on" : "Turn off";
+        String payload = "Turn on".equalsIgnoreCase(actionText) ? "ON" : "OFF";
+
         // 1. Lưu lịch sử ban đầu với trạng thái Pending
         ActionHistory history = ActionHistory.builder()
                 .device(device)
                 .user(user)
-                .action(req.getAction() != null ? req.getAction() : "Turn on")
+                .action(actionText)
                 .triggerBy(req.getTriggerBy() != null ? req.getTriggerBy() : "Web Dashboard")
                 .status("Pending")
                 .build();
         history = actionHistoryRepository.save(history);
 
-        // 2. Xác định Topic và Payload chuẩn cho ESP32 ("ON" hoặc "OFF")
+        // 2. Xác định Topic và đăng ký chờ ACK từ ESP32 trước khi publish
         String targetTopic = (device.getId() == 1L) ? led1SetTopic : led2SetTopic;
-        String payload = "Turn on".equalsIgnoreCase(req.getAction()) ? "ON" : "OFF";
+        CompletableFuture<String> ackFuture = mqttService.registerPendingAck(device.getId());
 
-        boolean published = false;
+        boolean published = mqttService.publishCommand(targetTopic, payload);
+        if (!published) {
+            mqttService.clearPendingAck(device.getId(), ackFuture);
+            history.setStatus("FAIL");
+            actionHistoryRepository.save(history);
+            throw new RuntimeException("Không thể gửi lệnh tới MQTT Broker!");
+        }
+
+        // 3. Chờ phản hồi xác nhận từ ESP32 (tối đa 3 giây)
         try {
-            published = mqttService.publishCommand(targetTopic, payload);
+            String ackStatus = ackFuture.get(3, TimeUnit.SECONDS);
+            if (payload.equalsIgnoreCase(ackStatus)) {
+                device.setCurrentStatus(payload);
+                deviceRepository.save(device);
+
+                history.setStatus("SUCCESS");
+                history = actionHistoryRepository.save(history);
+                return convertToDTO(history);
+            } else {
+                history.setStatus("FAIL");
+                actionHistoryRepository.save(history);
+                throw new RuntimeException("Phản hồi từ ESP32 không khớp trạng thái mong muốn!");
+            }
+        } catch (TimeoutException e) {
+            mqttService.clearPendingAck(device.getId(), ackFuture);
+            history.setStatus("FAIL");
+            actionHistoryRepository.save(history);
+            throw new RuntimeException("ESP32 không phản hồi (đang ngắt nguồn hoặc mất kết nối)!");
         } catch (Exception e) {
-            published = false;
+            mqttService.clearPendingAck(device.getId(), ackFuture);
+            history.setStatus("FAIL");
+            actionHistoryRepository.save(history);
+            throw new RuntimeException("Lỗi khi điều khiển thiết bị: " + e.getMessage());
         }
-
-        if (published) {
-            device.setCurrentStatus(payload);
-            deviceRepository.save(device);
-            history.setStatus("SUCCESS");
-        } else {
-            history.setStatus("SUCCESS"); // Đảm bảo trả về SUCCESS để test mượt mà ngay cả khi chưa cắm phần cứng
-        }
-
-        history = actionHistoryRepository.save(history);
-        return convertToDTO(history);
     }
 
     public List<ActionHistoryDTO> getAllHistory(int limit, String search, String deviceId, String action, String status) {
         try {
-            Page<ActionHistory> page = actionHistoryRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, limit));
+            Long deviceIdParam = null;
+            if (deviceId != null && !deviceId.isBlank() && !"All".equalsIgnoreCase(deviceId)) {
+                deviceIdParam = Long.parseLong(deviceId.trim());
+            }
+
+            String actionParam = (action != null && !action.isBlank() && !"All".equalsIgnoreCase(action)) ? action.trim() : null;
+            String statusParam = (status != null && !status.isBlank() && !"All".equalsIgnoreCase(status)) ? status.trim() : null;
+            String trimmedSearch = (search != null) ? search.trim().toLowerCase() : "";
+            boolean hasSearch = !trimmedSearch.isEmpty();
+
+            int fetchSize = hasSearch ? Math.max(limit, 5000) : Math.max(limit, 1);
+            Page<ActionHistory> page = actionHistoryRepository.findFiltered(
+                    deviceIdParam,
+                    actionParam,
+                    statusParam,
+                    PageRequest.of(0, fetchSize)
+            );
+
             return page.getContent().stream()
                     .map(this::convertToDTO)
                     .filter(dto -> {
-                        boolean matchSearch = (search == null || search.isBlank()) ||
-                                dto.getTime().toLowerCase().contains(search.toLowerCase()) ||
-                                dto.getName().toLowerCase().contains(search.toLowerCase());
-                        boolean matchId = (deviceId == null || deviceId.equals("All")) || dto.getId().equals(deviceId);
-                        boolean matchAction = (action == null || action.equals("All")) || dto.getAction().equalsIgnoreCase(action);
-                        boolean matchStatus = (status == null || status.equals("All")) || dto.getStatus().equalsIgnoreCase(status);
-                        return matchSearch && matchId && matchAction && matchStatus;
+                        if (!hasSearch) return true;
+                        return dto.getId().toLowerCase().contains(trimmedSearch)
+                                || dto.getName().toLowerCase().contains(trimmedSearch)
+                                || dto.getAction().toLowerCase().contains(trimmedSearch)
+                                || dto.getStatus().toLowerCase().contains(trimmedSearch)
+                                || dto.getTime().toLowerCase().contains(trimmedSearch);
                     })
+                    .limit(Math.max(limit, 1))
                     .collect(Collectors.toList());
         } catch (Exception e) {
             return List.of();
@@ -110,16 +150,19 @@ public class DeviceService {
     }
 
     public List<Device> getAllDevices() {
+        mqttService.syncOfflineDevicesIfNeeded();
         return deviceRepository.findAll();
     }
 
     private ActionHistoryDTO convertToDTO(ActionHistory h) {
         String deviceName = "Đèn 1";
-        String deviceIdStr = "01";
+        String deviceIdStr = "1";
         if (h.getDevice() != null) {
-            deviceIdStr = String.format("%02d", h.getDevice().getId());
+            deviceIdStr = String.valueOf(h.getDevice().getId());
             if (h.getDevice().getDeviceName() != null) {
                 deviceName = h.getDevice().getDeviceName();
+            } else {
+                deviceName = (h.getDevice().getId() == 2L) ? "Đèn 2" : "Đèn 1";
             }
         }
 
@@ -143,7 +186,7 @@ public class DeviceService {
                 .name(deviceName)
                 .action(h.getAction() != null ? h.getAction() : "Turn on")
                 .triggerBy(h.getTriggerBy() != null ? h.getTriggerBy() : "Admin")
-                .status(h.getStatus() != null ? h.getStatus() : "SUCCESS")
+                .status(h.getStatus() != null ? h.getStatus().toUpperCase() : "SUCCESS")
                 .time(formattedTime)
                 .performedBy(fullName)
                 .build();

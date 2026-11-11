@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Topbar from '../components/Topbar';
 import { Search, Download, Copy, Check } from 'lucide-react';
 
@@ -14,7 +14,7 @@ export default function HistoryView({ onLogout }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // State lưu danh sách lịch sử từ Backend
+  // State lưu danh sách lịch sử đã lọc từ Backend
   const [historyData, setHistoryData] = useState([]);
   const [copiedKey, setCopiedKey] = useState(null);
 
@@ -24,11 +24,21 @@ export default function HistoryView({ onLogout }) {
     setTimeout(() => setCopiedKey(null), 1500);
   };
 
-  // Gọi API lấy lịch sử từ Backend (có kèm Token bảo mật)
-  const fetchHistory = async () => {
+  // Gọi API lấy lịch sử đã lọc từ Backend (có kèm Token bảo mật)
+  const fetchHistory = useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/devices/history?limit=500`, {
+      const params = new URLSearchParams({
+        limit: '500',
+        deviceId: selectedId,
+        action: selectedAction,
+        status: selectedStatus
+      });
+      if (search.trim()) {
+        params.append('search', search.trim());
+      }
+
+      const res = await fetch(`${API_BASE}/devices/history?${params.toString()}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -40,59 +50,52 @@ export default function HistoryView({ onLogout }) {
       if (res.ok) {
         const data = await res.json();
         setHistoryData(
-          data.map((item, index) => ({
-            key: `${item.id || index}-${item.createdAt || index}`,
-            deviceId: String(item.deviceId || item.device_id || '1'),
-            name: item.deviceName || (item.deviceId == 2 ? 'Đèn 2' : 'Đèn 1'),
-            action: item.action || 'Turn on',
-            status: item.status || 'SUCCESS',
-            time: item.createdAt || item.time || new Date().toLocaleString()
-          }))
+          data.map((item, index) => {
+            const rawId = item.id ?? item.deviceId ?? item.device_id ?? '1';
+            const normalizedId = String(Number(rawId) || rawId);
+            const fallbackName = normalizedId === '2' ? 'Đèn 2' : 'Đèn 1';
+
+            return {
+              key: `${item.recordId || index}-${item.time || index}`,
+              deviceId: normalizedId,
+              name: item.name || item.deviceName || fallbackName,
+              action: item.action || 'Turn on',
+              status: (item.status || 'SUCCESS').toUpperCase(),
+              time: item.time || item.createdAt || ''
+            };
+          })
         );
       }
     } catch (err) {
       console.error('Lỗi khi tải lịch sử thiết bị:', err);
     }
-  };
+  }, [search, selectedId, selectedAction, selectedStatus, onLogout]);
 
   useEffect(() => {
-    fetchHistory();
+    const timer = setTimeout(() => {
+      fetchHistory();
+    }, 250);
+
     const interval = setInterval(fetchHistory, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [fetchHistory]);
 
-  // Lọc dữ liệu theo các tiêu chí tìm kiếm
-  const filteredHistory = historyData.filter((row) => {
-    const query = search.trim().toLowerCase();
-    
-    const matchSearch =
-      !query ||
-      row.deviceId.toLowerCase().includes(query) ||
-      row.name.toLowerCase().includes(query) ||
-      row.action.toLowerCase().includes(query) ||
-      row.status.toLowerCase().includes(query) ||
-      row.time.toLowerCase().includes(query);
-
-    const matchId = selectedId === 'All' || row.deviceId === selectedId;
-    const matchAction = selectedAction === 'All' || row.action === selectedAction;
-    const matchStatus = selectedStatus === 'All' || row.status === selectedStatus;
-
-    return matchSearch && matchId && matchAction && matchStatus;
-  });
-
-  // Phân trang
-  const totalPages = Math.ceil(filteredHistory.length / pageSize) || 1;
+  // Phân trang trên dữ liệu đã được BE lọc
+  const totalPages = Math.ceil(historyData.length / pageSize) || 1;
   const indexOfLastItem = currentPage * pageSize;
   const indexOfFirstItem = indexOfLastItem - pageSize;
-  const currentItems = filteredHistory.slice(indexOfFirstItem, indexOfLastItem);
+  const currentItems = historyData.slice(indexOfFirstItem, indexOfLastItem);
 
-  const startRecord = filteredHistory.length === 0 ? 0 : indexOfFirstItem + 1;
-  const endRecord = Math.min(indexOfLastItem, filteredHistory.length);
+  const startRecord = historyData.length === 0 ? 0 : indexOfFirstItem + 1;
+  const endRecord = Math.min(indexOfLastItem, historyData.length);
 
   // Xuất file CSV báo cáo
   const handleExportCSV = () => {
     let csvContent = 'data:text/csv;charset=utf-8,Device ID,Name,Action,Status,Time\n';
-    filteredHistory.forEach((row) => {
+    historyData.forEach((row) => {
       csvContent += `"${row.deviceId}","${row.name}","${row.action}","${row.status}","${row.time}"\n`;
     });
     const encodedUri = encodeURI(csvContent);
@@ -229,7 +232,7 @@ export default function HistoryView({ onLogout }) {
                   </td>
                 </tr>
               ))}
-              {filteredHistory.length === 0 && (
+              {historyData.length === 0 && (
                 <tr>
                   <td colSpan="5" className="text-center py-8 text-gray-500">
                     Chưa có lịch sử bật/tắt thiết bị hoặc không tìm thấy bản ghi phù hợp
@@ -244,7 +247,7 @@ export default function HistoryView({ onLogout }) {
         <div className="flex items-center justify-between text-xs text-gray-500 mt-3 pt-3 border-t border-[#1e293b] shrink-0">
           <div className="flex items-center gap-3">
             <span>
-              Showing {startRecord}-{endRecord} of {filteredHistory.length} records
+              Showing {startRecord}-{endRecord} of {historyData.length} records
             </span>
 
             <div className="flex items-center gap-1.5 pl-3 border-l border-[#1e293b]">

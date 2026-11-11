@@ -20,16 +20,19 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        User user = userRepository.findByEmailOrStudentId(username, username)
-                .orElseThrow(() -> new UsernameNotFoundException("Không tìm thấy tài khoản: " + username));
+        String cleanInput = username == null ? "" : username.trim();
+        User user = userRepository.findByEmailOrStudentId(cleanInput, cleanInput)
+                .orElseThrow(() -> new UsernameNotFoundException("Không tìm thấy tài khoản: " + cleanInput));
 
         String principal = (user.getStudentId() != null && !user.getStudentId().isBlank())
-                ? user.getStudentId()
-                : user.getEmail();
+                ? user.getStudentId().trim()
+                : user.getEmail().trim();
+
+        String dbPassword = user.getPassword() != null ? user.getPassword().trim() : "";
 
         return new org.springframework.security.core.userdetails.User(
                 principal,
-                user.getPassword(),
+                dbPassword,
                 Collections.emptyList()
         );
     }

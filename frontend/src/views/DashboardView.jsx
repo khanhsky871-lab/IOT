@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
-import { Thermometer, Droplets, Sun, Lightbulb, Loader2 } from 'lucide-react';
+import { Thermometer, Droplets, Sun, Lightbulb, Loader2, AlertCircle } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8080/api';
 
@@ -19,9 +19,10 @@ export default function DashboardView({ user, onLogout }) {
     { time: '08:00:04', temp: 24.8, humidity: 58.2, light: 720 }
   ]);
 
-  // State trạng thái đèn & hiệu ứng chờ 0.5s
+  // State trạng thái đèn & hiệu ứng chờ phản hồi ESP32
   const [lights, setLights] = useState({ light1: false, light2: false });
   const [loadingLight, setLoadingLight] = useState({ light1: false, light2: false });
+  const [controlError, setControlError] = useState('');
 
   // 1. Lấy trạng thái Đèn ban đầu từ Backend
   const fetchDeviceStatus = async () => {
@@ -106,7 +107,7 @@ export default function DashboardView({ user, onLogout }) {
     return () => clearInterval(interval);
   }, []);
 
-  // 3. Hàm gửi lệnh Bật/Tắt đèn xuống Backend -> MQTT -> ESP32
+  // 3. Hàm gửi lệnh Bật/Tắt đèn xuống Backend -> MQTT -> ESP32 (chờ xác nhận từ ESP32)
   const handleToggleLight = async (lightKey) => {
     if (loadingLight[lightKey]) return;
 
@@ -114,44 +115,43 @@ export default function DashboardView({ user, onLogout }) {
     const nextState = !lights[lightKey];
     const actionText = nextState ? 'Turn on' : 'Turn off';
 
-    // Bật hiệu ứng loading 0.5s
+    setControlError('');
     setLoadingLight((prev) => ({ ...prev, [lightKey]: true }));
 
-    // Lấy token đã lưu khi đăng nhập
     const token = localStorage.getItem('token');
 
-    setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_BASE}/devices/control`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            deviceId: deviceId,
-            userId: user?.id || 1,
-            action: actionText,
-            triggerBy: 'Web Dashboard'
-          })
-        });
+    try {
+      const res = await fetch(`${API_BASE}/devices/control`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          deviceId: deviceId,
+          userId: user?.id || 1,
+          action: actionText,
+          triggerBy: 'Web Dashboard'
+        })
+      });
 
-        if (res.status === 401 || res.status === 403) {
-          onLogout?.();
-          return;
-        }
-
-        if (res.ok) {
-          setLights((prev) => ({ ...prev, [lightKey]: nextState }));
-        } else {
-          console.error('Lỗi phản hồi từ server:', res.status);
-        }
-      } catch (err) {
-        console.error('Lỗi điều khiển đèn:', err);
-      } finally {
-        setLoadingLight((prev) => ({ ...prev, [lightKey]: false }));
+      if (res.status === 401 || res.status === 403) {
+        onLogout?.();
+        return;
       }
-    }, 500);
+
+      if (res.ok) {
+        setLights((prev) => ({ ...prev, [lightKey]: nextState }));
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setControlError(errData.message || 'ESP32 không phản hồi!');
+      }
+    } catch (err) {
+      console.error('Lỗi điều khiển đèn:', err);
+      setControlError('Không thể kết nối tới Backend!');
+    } finally {
+      setLoadingLight((prev) => ({ ...prev, [lightKey]: false }));
+    }
   };
 
   // Hàm tính tọa độ đường Polyline SVG cho biểu đồ
@@ -289,7 +289,14 @@ export default function DashboardView({ user, onLogout }) {
         <div className="bg-[#0f172a] border border-[#1e293b] rounded-2xl p-5 flex flex-col justify-between">
           <div>
             <h3 className="text-sm font-bold text-white mb-1">Actuator Controls</h3>
-            <p className="text-[11px] text-gray-400 mb-5">Control ESP32 GPIO Relays via MQTT</p>
+            <p className="text-[11px] text-gray-400 mb-4">Control ESP32 GPIO Relays via MQTT</p>
+
+            {controlError && (
+              <div className="mb-4 flex items-center gap-2 bg-rose-500/10 border border-rose-500/30 text-rose-400 px-3 py-2 rounded-xl text-[11px]">
+                <AlertCircle size={14} className="shrink-0" />
+                <span>{controlError}</span>
+              </div>
+            )}
 
             <div className="space-y-4">
               {/* Đèn 1 (GPIO 2) */}

@@ -17,9 +17,13 @@ public class SensorController {
         this.sensorService = sensorService;
     }
 
-    // Lấy danh sách dữ liệu cảm biến cho SensorView.jsx
+    // Lấy dữ liệu cảm biến cho DashboardView.jsx và SensorView.jsx (hỗ trợ tìm kiếm, lọc & sắp xếp)
     @GetMapping("/data")
-    public ResponseEntity<List<SensorDataDTO>> getSensorData(@RequestParam(defaultValue = "250") int limit) {
-        return ResponseEntity.ok(sensorService.getAllSensorData(limit));
+    public ResponseEntity<List<SensorDataDTO>> getSensorData(
+            @RequestParam(defaultValue = "100000") int limit,
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "All") String searchTarget,
+            @RequestParam(defaultValue = "none") String sortOrder) {
+        return ResponseEntity.ok(sensorService.getSensorData(limit, search, searchTarget, sortOrder));
     }
 }

@@ -37,10 +37,64 @@ public class SensorService {
         });
     }
 
-    // Lấy toàn bộ danh sách lịch sử cảm biến đã format cho React
+    // Giữ nguyên cho DashboardView.jsx
     public List<SensorDataDTO> getAllSensorData(int limit) {
         Page<SensorData> pageData = sensorDataRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, limit));
         return pageData.getContent().stream().map(this::convertToDTO).collect(Collectors.toList());
+    }
+
+    // Tìm kiếm, lọc theo searchTarget và sắp xếp giá trị tại Backend
+    public List<SensorDataDTO> getSensorData(int limit, String search, String searchTarget, String sortOrder) {
+        String trimmedSearch = (search != null) ? search.trim().toLowerCase() : "";
+        boolean hasSearch = !trimmedSearch.isEmpty();
+
+        String target = (searchTarget != null && !searchTarget.isBlank()) ? searchTarget.trim() : "All";
+        boolean isUnitFilter = "°C".equalsIgnoreCase(target) || "%".equalsIgnoreCase(target) || "lx".equalsIgnoreCase(target);
+        String unitParam = isUnitFilter ? target : null;
+
+        String sort = (sortOrder != null && !sortOrder.isBlank()) ? sortOrder.trim().toLowerCase() : "none";
+
+        // Khi có từ khóa search, lấy tập dữ liệu lớn hơn để tìm sâu hơn trước khi giới hạn limit
+        int fetchSize = hasSearch ? Math.max(limit, 5000) : Math.max(limit, 1);
+        PageRequest pageRequest = PageRequest.of(0, fetchSize);
+
+        Page<SensorData> pageData;
+        if ("asc".equals(sort)) {
+            pageData = sensorDataRepository.findFilteredOrderByValueAsc(unitParam, pageRequest);
+        } else if ("desc".equals(sort)) {
+            pageData = sensorDataRepository.findFilteredOrderByValueDesc(unitParam, pageRequest);
+        } else {
+            pageData = sensorDataRepository.findFilteredOrderByTimeDesc(unitParam, pageRequest);
+        }
+
+        return pageData.getContent().stream()
+                .map(this::convertToDTO)
+                .filter(dto -> {
+                    if (!hasSearch) return true;
+
+                    String idStr = dto.getId() != null ? dto.getId().toLowerCase() : "";
+                    String typeStr = dto.getType() != null ? dto.getType().toLowerCase() : "";
+                    String valueStr = dto.getValue() != null ? String.valueOf(dto.getValue()).toLowerCase() : "";
+                    String unitStr = dto.getUnit() != null ? dto.getUnit().toLowerCase() : "";
+                    String timeStr = dto.getTime() != null ? dto.getTime().toLowerCase() : "";
+
+                    if (isUnitFilter) {
+                        return valueStr.contains(trimmedSearch)
+                                || idStr.contains(trimmedSearch)
+                                || timeStr.contains(trimmedSearch);
+                    }
+                    if ("Time".equalsIgnoreCase(target)) {
+                        return timeStr.contains(trimmedSearch);
+                    }
+
+                    return idStr.contains(trimmedSearch)
+                            || typeStr.contains(trimmedSearch)
+                            || valueStr.contains(trimmedSearch)
+                            || unitStr.contains(trimmedSearch)
+                            || timeStr.contains(trimmedSearch);
+                })
+                .limit(Math.max(limit, 1))
+                .collect(Collectors.toList());
     }
 
     private SensorDataDTO convertToDTO(SensorData data) {

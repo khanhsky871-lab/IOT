@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.helix.iot.repository.ActionHistoryRepository;
 import com.helix.iot.repository.DeviceRepository;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.eclipse.paho.client.mqttv3.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -14,9 +15,16 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class MqttService implements MqttCallback {
+
+    private static final long ESP_OFFLINE_TIMEOUT_MS = 3000;
 
     @Value("${mqtt.broker.url}")
     private String brokerUrl;
@@ -46,6 +54,14 @@ public class MqttService implements MqttCallback {
     private final SimpMessagingTemplate messagingTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // Lưu các yêu cầu đang chờ ESP32 xác nhận theo deviceId
+    private final ConcurrentHashMap<Long, CompletableFuture<String>> pendingAcks = new ConcurrentHashMap<>();
+
+    // Theo dõi thời điểm nhận dữ liệu cuối cùng từ ESP32
+    private final long serverStartedAt = System.currentTimeMillis();
+    private volatile long lastEspActivityAt = 0;
+    private ScheduledExecutorService offlineMonitor;
+
     public MqttService(SensorService sensorService,
                        DeviceRepository deviceRepository,
                        ActionHistoryRepository actionHistoryRepository,
@@ -59,6 +75,21 @@ public class MqttService implements MqttCallback {
     @PostConstruct
     public void init() {
         connectMqtt();
+        offlineMonitor = Executors.newSingleThreadScheduledExecutor();
+        offlineMonitor.scheduleAtFixedRate(this::syncOfflineDevicesIfNeeded, 2, 2, TimeUnit.SECONDS);
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        if (offlineMonitor != null) {
+            offlineMonitor.shutdownNow();
+        }
+        try {
+            if (client != null && client.isConnected()) {
+                client.disconnect();
+            }
+        } catch (MqttException ignored) {
+        }
     }
 
     private void connectMqtt() {
@@ -88,15 +119,59 @@ public class MqttService implements MqttCallback {
         }
     }
 
+    public boolean isEspOnline() {
+        long now = System.currentTimeMillis();
+        long referenceTime = Math.max(lastEspActivityAt, serverStartedAt);
+        return (now - referenceTime) < ESP_OFFLINE_TIMEOUT_MS;
+    }
+
+    public synchronized void syncOfflineDevicesIfNeeded() {
+        if (isEspOnline()) {
+            return;
+        }
+        try {
+            deviceRepository.findAll().forEach(device -> {
+                if (!"OFF".equalsIgnoreCase(device.getCurrentStatus())) {
+                    device.setCurrentStatus("OFF");
+                    deviceRepository.save(device);
+                    messagingTemplate.convertAndSend("/topic/devices", Map.of(
+                            "deviceId", device.getId(),
+                            "status", "OFF"
+                    ));
+                }
+            });
+        } catch (Exception e) {
+            System.err.println("⚠️ Lỗi đồng bộ trạng thái thiết bị offline: " + e.getMessage());
+        }
+    }
+
+    public CompletableFuture<String> registerPendingAck(Long deviceId) {
+        CompletableFuture<String> future = new CompletableFuture<>();
+        CompletableFuture<String> previous = pendingAcks.put(deviceId, future);
+        if (previous != null && !previous.isDone()) {
+            previous.cancel(false);
+        }
+        return future;
+    }
+
+    public void clearPendingAck(Long deviceId, CompletableFuture<String> future) {
+        pendingAcks.remove(deviceId, future);
+    }
+
     @Override
     public void messageArrived(String topic, MqttMessage message) {
         String payload = new String(message.getPayload());
+
+        // Ghi nhận thời điểm ESP32 còn hoạt động khi có tin nhắn từ các topic của ESP32
+        if (topic.equals(sensorTopic) || topic.equals(led1StatusTopic) || topic.equals(led2StatusTopic)) {
+            lastEspActivityAt = System.currentTimeMillis();
+        }
 
         // 1. XỬ LÝ DỮ LIỆU CẢM BIẾN TỪ ESP32: {"temp": 25.4, "humidity": 60.0, "light": 720}
         if (topic.equals(sensorTopic)) {
             try {
                 JsonNode json = objectMapper.readTree(payload);
-                Double temp = json.has("temp") ? json.get("temp").asDouble() : 
+                Double temp = json.has("temp") ? json.get("temp").asDouble() :
                              (json.has("temperature") ? json.get("temperature").asDouble() : null);
                 Double humid = json.has("humidity") ? json.get("humidity").asDouble() : null;
                 Double light = json.has("light") ? json.get("light").asDouble() : null;
@@ -131,20 +206,16 @@ public class MqttService implements MqttCallback {
     }
 
     private void updateDeviceAndHistoryStatus(Long deviceId, String newStatus) {
-        // Cập nhật trạng thái hiện tại trong bảng devices
+        CompletableFuture<String> future = pendingAcks.remove(deviceId);
+        if (future != null && !future.isDone()) {
+            future.complete(newStatus);
+        }
+
         deviceRepository.findById(deviceId).ifPresent(device -> {
             device.setCurrentStatus(newStatus);
             deviceRepository.save(device);
         });
 
-        // Cập nhật bản ghi lịch sử đang Pending thành Success
-        actionHistoryRepository.findFirstByDevice_IdAndStatusOrderByCreatedAtDesc(deviceId, "Pending")
-                .ifPresent(history -> {
-                    history.setStatus("Success");
-                    actionHistoryRepository.save(history);
-                });
-
-        // Báo qua WebSocket cho Frontend đồng bộ nút gạt
         messagingTemplate.convertAndSend("/topic/devices", Map.of(
                 "deviceId", deviceId,
                 "status", newStatus

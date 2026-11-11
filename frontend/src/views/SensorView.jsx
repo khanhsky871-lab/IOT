@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Topbar from '../components/Topbar';
 import { Search, Copy, Check, ArrowUpDown } from 'lucide-react';
 
@@ -13,7 +13,7 @@ export default function SensorView({ onLogout }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // State lưu danh sách lịch sử cảm biến từ Backend
+  // State lưu danh sách lịch sử cảm biến đã lọc & sắp xếp từ Backend
   const [sensorData, setSensorData] = useState([]);
 
   // State quản lý hiệu ứng đã copy cho từng dòng
@@ -27,11 +27,20 @@ export default function SensorView({ onLogout }) {
     }, 1500);
   };
 
-  // Gọi API lấy dữ liệu cảm biến từ SQL Server (có kèm JWT Token)
-  const fetchSensorHistory = async () => {
+  // Gọi API lấy dữ liệu cảm biến đã lọc & sắp xếp từ Backend
+  const fetchSensorHistory = useCallback(async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/sensors/data?limit=500`, {
+      const params = new URLSearchParams({
+        limit: '5000',
+        searchTarget,
+        sortOrder
+      });
+      if (search.trim()) {
+        params.append('search', search.trim());
+      }
+
+      const res = await fetch(`${API_BASE}/sensors/data?${params.toString()}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -56,62 +65,28 @@ export default function SensorView({ onLogout }) {
     } catch (error) {
       console.error('Lỗi khi lấy dữ liệu cảm biến:', error);
     }
-  };
+  }, [search, searchTarget, sortOrder, onLogout]);
 
   useEffect(() => {
-    fetchSensorHistory();
+    const timer = setTimeout(() => {
+      fetchSensorHistory();
+    }, 250);
+
     const interval = setInterval(fetchSensorHistory, 2000);
-    return () => clearInterval(interval);
-  }, []);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [fetchSensorHistory]);
 
-  // 1. Lọc và tìm kiếm dữ liệu
-  const filteredSensors = sensorData.filter((row) => {
-    const trimmed = search.trim().toLowerCase();
-    if (!trimmed) return true;
-
-    if (searchTarget === '°C') {
-      return row.unit === '°C' && (row.value.toLowerCase().includes(trimmed) || row.id.toLowerCase().includes(trimmed) || row.time.toLowerCase().includes(trimmed));
-    }
-    if (searchTarget === '%') {
-      return row.unit === '%' && (row.value.toLowerCase().includes(trimmed) || row.id.toLowerCase().includes(trimmed) || row.time.toLowerCase().includes(trimmed));
-    }
-    if (searchTarget === 'lx') {
-      return row.unit === 'lx' && (row.value.toLowerCase().includes(trimmed) || row.id.toLowerCase().includes(trimmed) || row.time.toLowerCase().includes(trimmed));
-    }
-    if (searchTarget === 'Time') {
-      return row.time.toLowerCase().includes(trimmed);
-    }
-
-    return (
-      row.id.toLowerCase().includes(trimmed) ||
-      row.type.toLowerCase().includes(trimmed) ||
-      row.value.toLowerCase().includes(trimmed) ||
-      row.unit.toLowerCase().includes(trimmed) ||
-      row.time.toLowerCase().includes(trimmed)
-    );
-  });
-
-  // 2. Sắp xếp theo giá trị (Value)
-  const sortedSensors = [...filteredSensors].sort((a, b) => {
-    if (sortOrder === 'none') return 0;
-    const valA = parseFloat(a.value) || 0;
-    const valB = parseFloat(b.value) || 0;
-    if (sortOrder === 'asc') {
-      return valA - valB;
-    } else if (sortOrder === 'desc') {
-      return valB - valA;
-    }
-    return 0;
-  });
-
-  // Phân trang theo pageSize
-  const totalPages = Math.ceil(sortedSensors.length / pageSize) || 1;
+  // Phân trang theo pageSize trên dữ liệu đã được BE lọc & sắp xếp
+  const totalPages = Math.ceil(sensorData.length / pageSize) || 1;
   const indexOfLastItem = currentPage * pageSize;
   const indexOfFirstItem = indexOfLastItem - pageSize;
-  const currentItems = sortedSensors.slice(indexOfFirstItem, indexOfLastItem);
+  const currentItems = sensorData.slice(indexOfFirstItem, indexOfLastItem);
 
-  const startRecord = sortedSensors.length === 0 ? 0 : indexOfFirstItem + 1;
-  const endRecord = Math.min(indexOfLastItem, sortedSensors.length);
+  const startRecord = sensorData.length === 0 ? 0 : indexOfFirstItem + 1;
+  const endRecord = Math.min(indexOfLastItem, sensorData.length);
 
   const getPlaceholder = () => {
     switch (searchTarget) {
@@ -235,7 +210,7 @@ export default function SensorView({ onLogout }) {
                   </tr>
                 );
               })}
-              {sortedSensors.length === 0 && (
+              {sensorData.length === 0 && (
                 <tr>
                   <td colSpan="6" className="text-center py-8 text-gray-500">
                     Chưa có dữ liệu hoặc không tìm thấy bản ghi phù hợp
@@ -250,7 +225,7 @@ export default function SensorView({ onLogout }) {
         <div className="flex items-center justify-between text-xs text-gray-500 mt-3 pt-3 border-t border-[#1e293b] shrink-0">
           <div className="flex items-center gap-3">
             <span>
-              Showing {startRecord}-{endRecord} of {sortedSensors.length} records
+              Showing {startRecord}-{endRecord} of {sensorData.length} records
             </span>
 
             <div className="flex items-center gap-1.5 pl-3 border-l border-[#1e293b]">
